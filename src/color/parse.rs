@@ -2,8 +2,6 @@
 
 use core::fmt;
 
-use anyhow::Ok;
-
 use crate::color::{ColorFloat, model::Color};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -344,51 +342,6 @@ fn parse_css_rgb(args: &str) -> Result<Color, ColorParseError> {
     Ok(Color::from_rgba([r, g, b, a]))
 }
 
-/// Parse a CSS rgba function.
-///
-/// The allowed styles are:
-/// rgba(r,g,b,a)
-/// rgba(r g b a) (TODO: needs implementation)
-/// rgba(r% g% b% a%) (TODO: needs implementation)
-/// rgba(r g b / a) (TODO: needs implementation)
-fn parse_css_rgba(args: &str) -> Result<Color, ColorParseError> {
-    use ColorParseError::*;
-
-    let nums: Vec<&str> = args.split(',').map(|t| t.trim()).collect();
-    if nums.len() != 4 {
-        return Err(InvalidFunc);
-    }
-
-    let r = nums[0]
-        .parse::<u16>()
-        .ok()
-        .filter(|&v| v <= 255)
-        .ok_or(OutOfRange)? as u8;
-    let g = nums[1]
-        .parse::<u16>()
-        .ok()
-        .filter(|&v| v <= 255)
-        .ok_or(OutOfRange)? as u8;
-    let b = nums[2]
-        .parse::<u16>()
-        .ok()
-        .filter(|&v| v <= 255)
-        .ok_or(OutOfRange)? as u8;
-
-    // allow 0.0..1.0 or 0..255
-    let a = if let Ok(f) = nums[3].parse::<f32>() {
-        (f.clamp(0.0, 1.0) * 255.0 + 0.5).floor() as u8
-    } else {
-        nums[3]
-            .parse::<u16>()
-            .ok()
-            .filter(|&v| v <= 255)
-            .ok_or(OutOfRange)? as u8
-    };
-
-    Ok(Color::from_rgba([r, g, b, a]))
-}
-
 pub fn parse_color(mut s: &str) -> Result<Color, ColorParseError> {
     use ColorParseError::*;
 
@@ -396,12 +349,6 @@ pub fn parse_color(mut s: &str) -> Result<Color, ColorParseError> {
         return Err(Empty);
     }
     s = s.trim();
-
-    // Hex-like
-    if let Some(rest) = s.strip_prefix('#') {
-        let hex = rest.trim();
-        return parse_hex(hex);
-    }
 
     // CSS-like: rgb(r,g,b) / rgba(r,g,b,a[0..1])
     // TODO: Parsing support is “CSS2-ish” right now
@@ -414,15 +361,26 @@ pub fn parse_color(mut s: &str) -> Result<Color, ColorParseError> {
     // We already have HSL converters, so once the parser extracts (h, s%, l%, a?), we can call from_hsl.
     // Also allow for things like rgb(+255, +255, +255) (CSS allowed)
     let lower = s.to_ascii_lowercase();
+
     if let Some(args) = lower.strip_prefix("rgb(").and_then(|x| x.strip_suffix(')')) {
         return parse_css_rgb(args);
     }
+    // rgba() in CSS is just rgb() with the same arg grammar in modern CSS
     if let Some(args) = lower
         .strip_prefix("rgba(")
         .and_then(|x| x.strip_suffix(')'))
     {
-        return parse_css_rgba(args);
+        return parse_css_rgb(args);
     }
+
+    // Hex-like
+    if let Some(rest) = s.strip_prefix('#') {
+        let hex = rest.trim();
+        return parse_hex(hex);
+    }
+
+    // try hex without '#'
+    // TODO
 
     Err(InvalidFunc)
 }
