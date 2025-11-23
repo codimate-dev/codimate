@@ -4,13 +4,31 @@ use core::fmt;
 
 use crate::color::model::Color;
 
+/// An error caused by parsing an invalid color string slice.
+///
+/// # Variants
+///
+/// - `Empty` - The given string slice was empty or all whitespace.
+/// - `InvalidLength` - The given string slice had an invalid length.
+/// - `InvalidHex` - The given string slice was not a valid hex representation.
+///
+/// # Examples
+///
+/// ```
+/// use codimate::color::{ColorParseError, parse_color};
+///
+/// let hex = "#fff";
+/// let color = parse_color(hex)
+/// match color {
+///     Ok(v) => println!("Good color value: {}", color.into_hex6()),
+///     Err(e) => println!("Error parsing color: {}", e),
+/// }
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ColorParseError {
     Empty,
     InvalidLength,
     InvalidHex,
-    InvalidFunc,
-    OutOfRange,
 }
 
 impl fmt::Display for ColorParseError {
@@ -20,8 +38,6 @@ impl fmt::Display for ColorParseError {
             Empty => "empty color string",
             InvalidLength => "invalid hex length",
             InvalidHex => "invalid hex digits",
-            InvalidFunc => "invalid rgb()/rgba() function",
-            OutOfRange => "component out of range",
         };
         f.write_str(msg)
     }
@@ -36,6 +52,14 @@ impl std::error::Error for ColorParseError {}
 /// * #RGBA
 /// * #RRGGBB
 /// * #RRGGBBAA
+///
+/// # Arguments
+///
+/// - `hex` (`&str`) - The hex value to parse.
+///
+/// # Returns
+///
+/// - `Result<Color, ColorParseError>` - The result of parsing.
 fn parse_hex(hex: &str) -> Result<Color, ColorParseError> {
     use ColorParseError::*;
 
@@ -105,85 +129,30 @@ fn parse_hex(hex: &str) -> Result<Color, ColorParseError> {
     Ok(Color::from_rgba([r, g, b, a]))
 }
 
-/// Parse a CSS rgb function.
+/// Parse a color from a string slice.
+/// This function supports:
+/// * Hex string slices
 ///
-/// The allowed styles are:
-/// rgb(r,g,b)
-/// rgb(r g b) (TODO: needs implementation)
-/// rgb(r% g% b%) (TODO: needs implementation)
-/// rgb(r g b / a) (TODO: needs implementation)
-fn parse_css_rgb(args: &str) -> Result<Color, ColorParseError> {
-    use ColorParseError::*;
-
-    let nums: Vec<&str> = args.split(',').map(|t| t.trim()).collect();
-    if nums.len() != 3 {
-        return Err(InvalidFunc);
-    }
-
-    let r = nums[0]
-        .parse::<u16>()
-        .ok()
-        .filter(|&v| v <= 255)
-        .ok_or(OutOfRange)? as u8;
-    let g = nums[1]
-        .parse::<u16>()
-        .ok()
-        .filter(|&v| v <= 255)
-        .ok_or(OutOfRange)? as u8;
-    let b = nums[2]
-        .parse::<u16>()
-        .ok()
-        .filter(|&v| v <= 255)
-        .ok_or(OutOfRange)? as u8;
-
-    Ok(Color::from_rgb([r, g, b]))
-}
-
-/// Parse a CSS rgba function.
+/// # Arguments
 ///
-/// The allowed styles are:
-/// rgba(r,g,b,a)
-/// rgba(r g b a) (TODO: needs implementation)
-/// rgba(r% g% b% a%) (TODO: needs implementation)
-/// rgba(r g b / a) (TODO: needs implementation)
-fn parse_css_rgba(args: &str) -> Result<Color, ColorParseError> {
-    use ColorParseError::*;
-
-    let nums: Vec<&str> = args.split(',').map(|t| t.trim()).collect();
-    if nums.len() != 4 {
-        return Err(InvalidFunc);
-    }
-
-    let r = nums[0]
-        .parse::<u16>()
-        .ok()
-        .filter(|&v| v <= 255)
-        .ok_or(OutOfRange)? as u8;
-    let g = nums[1]
-        .parse::<u16>()
-        .ok()
-        .filter(|&v| v <= 255)
-        .ok_or(OutOfRange)? as u8;
-    let b = nums[2]
-        .parse::<u16>()
-        .ok()
-        .filter(|&v| v <= 255)
-        .ok_or(OutOfRange)? as u8;
-
-    // allow 0.0..1.0 or 0..255
-    let a = if let Ok(f) = nums[3].parse::<f32>() {
-        (f.clamp(0.0, 1.0) * 255.0 + 0.5).floor() as u8
-    } else {
-        nums[3]
-            .parse::<u16>()
-            .ok()
-            .filter(|&v| v <= 255)
-            .ok_or(OutOfRange)? as u8
-    };
-
-    Ok(Color::from_rgba([r, g, b, a]))
-}
-
+/// - `mut s` (`&str`) - The string slice to parse.
+///
+/// # Returns
+///
+/// - `Result<Color, ColorParseError>` - The result of the parse.
+///
+/// # Examples
+///
+/// ```
+/// use codimate::color::parse_color;
+///
+/// let hex = "#fff";
+/// let color = parse_color(hex)
+/// match color {
+///     Ok(v) => println!("Good color value: {}", color.into_hex6()),
+///     Err(e) => println!("Error parsing color: {}", e),
+/// }
+/// ```
 pub fn parse_color(mut s: &str) -> Result<Color, ColorParseError> {
     use ColorParseError::*;
 
@@ -198,28 +167,7 @@ pub fn parse_color(mut s: &str) -> Result<Color, ColorParseError> {
         return parse_hex(hex);
     }
 
-    // CSS-like: rgb(r,g,b) / rgba(r,g,b,a[0..1])
-    // TODO: Parsing support is “CSS2-ish” right now
-    // We only handle rgb(r,g,b) and rgba(r,g,b,a) with integers and commas. Modern CSS allows:
-    // Space-separated: rgb(255 0 0)
-    // Percentages: rgb(100% 0% 0%)
-    // Slash alpha: rgb(255 0 0 / 0.5)
-    // HSL: hsl(210 50% 40% / 0.7)
-    // Plan: add a small tokenizer that accepts commas or spaces, and an optional / alpha token.
-    // We already have HSL converters, so once the parser extracts (h, s%, l%, a?), we can call from_hsl.
-    // Also allow for things like rgb(+255, +255, +255) (CSS allowed)
-    let lower = s.to_ascii_lowercase();
-    if let Some(args) = lower.strip_prefix("rgb(").and_then(|x| x.strip_suffix(')')) {
-        return parse_css_rgb(args);
-    }
-    if let Some(args) = lower
-        .strip_prefix("rgba(")
-        .and_then(|x| x.strip_suffix(')'))
-    {
-        return parse_css_rgba(args);
-    }
-
-    Err(InvalidFunc)
+    Err(InvalidHex)
 }
 
 impl core::str::FromStr for Color {
