@@ -1526,22 +1526,6 @@ impl fmt::Display for Color {
 // TODO
 // What to build (in sequence)
 
-// Core type & representations
-
-// Parsing & printing
-
-// CSS funcs (modern syntax):
-
-// hsl(210 50% 40% / 0.7) (you’ll need HSL↔RGB).
-
-// (Optional) hwb(h w b / a).
-
-// Validation & ergonomics
-
-// Accept integer 0–255 or percentages (e.g., rgb(100% 0% 0%)).
-
-// Alpha accepts 0..1 floats or 0..255 ints.
-
 // Utilities
 
 // lighten/darken.
@@ -1572,20 +1556,6 @@ impl fmt::Display for Color {
 // Targets: 4.5:1 (normal text), 3:1 (large text).
 // W3C
 // +1
-
-// Implementation tips (so this is done right and fast)
-
-// Parser shape:
-
-// Strip whitespace → detect # vs rgb(/hsl(/hwb(.
-
-// Hex: accept 3/4/6/8 nibbles; expand 3/4 to 6/8 via x → x*17.
-
-// CSS: support commas or spaces, and / alpha per Color Level 4. Percentages allowed.
-// W3C
-// +1
-
-// Alpha semantics: keep straight alpha externally (what creators expect). Convert to premultiplied internally when blending.
 
 // Interpolation defaults:
 

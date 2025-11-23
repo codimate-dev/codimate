@@ -2,16 +2,33 @@
 
 use core::fmt;
 
-use crate::color::{ColorFloat, model::Color};
+use crate::color::model::Color;
 
+/// An error caused by parsing an invalid color string slice.
+///
+/// # Variants
+///
+/// - `Empty` - The given string slice was empty or all whitespace.
+/// - `InvalidLength` - The given string slice had an invalid length.
+/// - `InvalidHex` - The given string slice was not a valid hex representation.
+///
+/// # Examples
+///
+/// ```
+/// use codimate::color::{ColorParseError, parse_color};
+///
+/// let hex = "#fff";
+/// let color = parse_color(hex)
+/// match color {
+///     Ok(v) => println!("Good color value: {}", color.into_hex6()),
+///     Err(e) => println!("Error parsing color: {}", e),
+/// }
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ColorParseError {
     Empty,
     InvalidLength,
     InvalidHex,
-    InvalidFunc,
-    OutOfRange,
-    InvalidToken,
 }
 
 impl fmt::Display for ColorParseError {
@@ -21,9 +38,6 @@ impl fmt::Display for ColorParseError {
             Empty => "empty color string",
             InvalidLength => "invalid hex length",
             InvalidHex => "invalid hex digits",
-            InvalidFunc => "invalid function name",
-            OutOfRange => "component out of range",
-            InvalidToken => "invalid token found in function",
         };
         f.write_str(msg)
     }
@@ -31,181 +45,21 @@ impl fmt::Display for ColorParseError {
 #[cfg(feature = "std")]
 impl std::error::Error for ColorParseError {}
 
-/// All types of tokens that can be found in a CSS color function signature.
+/// Parse a hex color from a string.
 ///
-/// Number can be represented as:
-///     [+-]? [0-9]* ( "." [0-9]+ )? ["%"]?
-/// ex: 10, 10.5, +10, -0.1, 50%, etc
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum CssColorToken<'a> {
-    Number(&'a str), // may have sign, decimal, %, etc
-    Slash,
-    Comma,
-}
-
-fn tokenize(input: &str) -> Result<Vec<CssColorToken<'_>>, ColorParseError> {
-    use ColorParseError::InvalidToken;
-
-    let bytes = input.as_bytes();
-    let mut tokens = Vec::new();
-    let mut i = 0;
-
-    while i < bytes.len() {
-        match bytes[i] {
-            // skip whitespace
-            b' ' | b'\t' | b'\n' | b'\r' => {
-                i += 1;
-            }
-
-            // start of a number: sign, digit, or '.'
-            b'+' | b'-' | b'0'..=b'9' | b'.' => {
-                let start = i;
-
-                // optional sign
-                if bytes[i] == b'+' || bytes[i] == b'-' {
-                    i += 1;
-                }
-
-                // int part
-                while i < bytes.len() && bytes[i].is_ascii_digit() {
-                    i += 1;
-                }
-
-                // optional fractional part
-                if i < bytes.len() && bytes[i] == b'.' {
-                    i += 1;
-                    while i < bytes.len() && bytes[i].is_ascii_digit() {
-                        i += 1;
-                    }
-                }
-
-                // optional %
-                if i < bytes.len() && bytes[i] == b'%' {
-                    i += 1;
-                }
-
-                if i == start {
-                    return Err(InvalidToken);
-                }
-
-                let lexeme = &input[start..i];
-                tokens.push(CssColorToken::Number(lexeme));
-            }
-
-            // single chars
-            b'/' => {
-                tokens.push(CssColorToken::Slash);
-                i += 1;
-            }
-            b',' => {
-                tokens.push(CssColorToken::Comma);
-                i += 1;
-            }
-
-            // invalid
-            _ => return Err(InvalidToken),
-        }
-    }
-
-    Ok(tokens)
-}
-
-fn parse_rgb_component(num: &str) -> Result<u8, ColorParseError> {
-    use ColorParseError::{InvalidToken, OutOfRange};
-
-    let (core, is_percent) = if let Some(stripped) = num.strip_suffix('%') {
-        (stripped, true)
-    } else {
-        (num, false)
-    };
-
-    if is_percent {
-        let v: ColorFloat = core.parse().map_err(|_| InvalidToken)?;
-        if !(0.0..=100.0).contains(&v) {
-            return Err(OutOfRange);
-        }
-        let scaled = (v / 100.0 * 255.0).round();
-        Ok(scaled.clamp(0.0, 255.0) as u8)
-    } else {
-        // try int first
-        if let Ok(v_int) = core.parse::<u16>() {
-            if v_int > 255 {
-                return Err(OutOfRange);
-            }
-            Ok(v_int as u8)
-        } else {
-            let v: ColorFloat = core.parse().map_err(|_| InvalidToken)?;
-            if !(0.0..=255.0).contains(&v) {
-                return Err(OutOfRange);
-            }
-            Ok(v.round().clamp(0.0, 255.0) as u8)
-        }
-    }
-}
-
-fn parse_alpha_component(num: &str) -> Result<u8, ColorParseError> {
-    use ColorParseError::{InvalidToken, OutOfRange};
-
-    let (core, is_percent) = if let Some(stripped) = num.strip_suffix('%') {
-        (stripped, true)
-    } else {
-        (num, false)
-    };
-
-    if is_percent {
-        let v: ColorFloat = core.parse().map_err(|_| InvalidToken)?;
-        if !(0.0..=100.0).contains(&v) {
-            return Err(OutOfRange);
-        }
-        let scaled = (v / 100.0 * 255.0).round();
-        Ok(scaled.clamp(0.0, 255.0) as u8)
-    } else {
-        // try 0.0..1.0 first
-        if let Ok(vf) = core.parse::<ColorFloat>() {
-            if (0.0..=1.0).contains(&vf) {
-                let scaled = (vf * 255.0).round();
-                return Ok(scaled.clamp(0.0, 255.0) as u8);
-            }
-        }
-
-        // then try 0..255
-        let vi: u16 = core.parse().map_err(|_| InvalidToken)?;
-        if vi > 255 {
-            return Err(OutOfRange);
-        }
-        Ok(vi as u8)
-    }
-}
-
-fn parse_hue_component(num: &str) -> Result<ColorFloat, ColorParseError> {
-    use ColorParseError::InvalidToken;
-
-    if num.ends_with('%') {
-        return Err(InvalidToken);
-    }
-
-    num.parse::<ColorFloat>().map_err(|_| InvalidToken)
-}
-
-fn parse_hsl_percentage(num: &str) -> Result<ColorFloat, ColorParseError> {
-    use ColorParseError::{InvalidToken, OutOfRange};
-
-    let core = num.strip_suffix('%').ok_or(InvalidToken)?;
-    let v: ColorFloat = core.parse().map_err(|_| InvalidToken)?;
-    if !(0.0..=100.0).contains(&v) {
-        return Err(OutOfRange);
-    }
-    Ok(v)
-}
-
-// Parse a hex color from a string.
-//
-// The allowed formats are:
-// * #RGB
-// * #RGBA
-// * #RRGGBB
-// * #RRGGBBAA
-
+/// The allowed formats are:
+/// * #RGB
+/// * #RGBA
+/// * #RRGGBB
+/// * #RRGGBBAA
+///
+/// # Arguments
+///
+/// - `hex` (`&str`) - The hex value to parse.
+///
+/// # Returns
+///
+/// - `Result<Color, ColorParseError>` - The result of parsing.
 fn parse_hex(hex: &str) -> Result<Color, ColorParseError> {
     use ColorParseError::*;
 
@@ -275,176 +129,30 @@ fn parse_hex(hex: &str) -> Result<Color, ColorParseError> {
     Ok(Color::from_rgba([r, g, b, a]))
 }
 
-// Parse a CSS rgb function.
-//
-// The allowed styles are:
-// rgb(r,g,b)
-// rgb(r g b)
-// rgb(r% g% b%)
-// rgb(r g b / a)
-
-fn parse_css_rgb(args: &str) -> Result<Color, ColorParseError> {
-    use ColorParseError::*;
-
-    let tokens = tokenize(args)?;
-    if tokens.is_empty() {
-        return Err(InvalidFunc);
-    }
-
-    let has_comma = tokens.iter().any(|t| matches!(t, CssColorToken::Comma));
-
-    let mut it = tokens.iter().peekable();
-    let mut comps: Vec<&str> = Vec::new();
-    let mut alpha: Option<&str> = None;
-
-    if has_comma {
-        // legacy rgb(r, g, b) or rgb(r, g, b, a)
-        loop {
-            let num = match it.next() {
-                Some(CssColorToken::Number(s)) => *s,
-                Some(_) => return Err(InvalidFunc),
-                None => break,
-            };
-            comps.push(num);
-
-            match it.next() {
-                Some(CssColorToken::Comma) => continue,
-                Some(CssColorToken::Slash) => {
-                    // css technically doesn't have slash
-                    // in the comma form, but it's easy
-                    // enough to support.
-                    let next = match it.next() {
-                        Some(CssColorToken::Number(s)) => *s,
-                        _ => return Err(InvalidToken),
-                    };
-                    alpha = Some(next);
-                    if it.next().is_some() {
-                        return Err(InvalidFunc);
-                    }
-                    break;
-                }
-                None => break,
-                Some(_) => return Err(InvalidToken),
-            }
-        }
-    } else {
-        // modern: rgb(r g b / a?)
-        while let Some(token) = it.next() {
-            match token {
-                CssColorToken::Number(s) => {
-                    if alpha.is_some() {
-                        return Err(InvalidFunc); // nums after alpha not allowed
-                    }
-                    comps.push(*s);
-                }
-                CssColorToken::Slash => {
-                    if alpha.is_some() {
-                        return Err(InvalidFunc); // double slash
-                    }
-                    let next = match it.next() {
-                        Some(CssColorToken::Number(s)) => *s,
-                        _ => return Err(InvalidToken),
-                    };
-                    alpha = Some(next);
-                }
-                CssColorToken::Comma => return Err(InvalidToken), // commas not allowed in this form
-            }
-        }
-    }
-
-    // need exactly 3 colors
-    if comps.len() != 3 {
-        return Err(InvalidFunc);
-    }
-
-    let r = parse_rgb_component(comps[0])?;
-    let g = parse_rgb_component(comps[1])?;
-    let b = parse_rgb_component(comps[2])?;
-    let a = alpha.map(parse_alpha_component).transpose()?.unwrap_or(255);
-
-    Ok(Color::from_rgba([r, g, b, a]))
-}
-
-// Parse a CSS hsl/hsla function (modern space or legacy comma syntax).
-fn parse_css_hsl(args: &str) -> Result<Color, ColorParseError> {
-    use ColorParseError::*;
-
-    let tokens = tokenize(args)?;
-    if tokens.is_empty() {
-        return Err(InvalidFunc);
-    }
-
-    let has_comma = tokens.iter().any(|t| matches!(t, CssColorToken::Comma));
-
-    let mut it = tokens.iter().peekable();
-    let mut comps: Vec<&str> = Vec::new();
-    let mut alpha: Option<&str> = None;
-
-    if has_comma {
-        // legacy hsl(h, s%, l%) or with trailing alpha
-        loop {
-            let num = match it.next() {
-                Some(CssColorToken::Number(s)) => *s,
-                Some(_) => return Err(InvalidFunc),
-                None => break,
-            };
-            comps.push(num);
-
-            match it.next() {
-                Some(CssColorToken::Comma) => continue,
-                Some(CssColorToken::Slash) => {
-                    let next = match it.next() {
-                        Some(CssColorToken::Number(s)) => *s,
-                        _ => return Err(InvalidToken),
-                    };
-                    alpha = Some(next);
-                    if it.next().is_some() {
-                        return Err(InvalidFunc);
-                    }
-                    break;
-                }
-                None => break,
-                Some(_) => return Err(InvalidToken),
-            }
-        }
-    } else {
-        // modern: hsl(h s% l% / a?)
-        while let Some(token) = it.next() {
-            match token {
-                CssColorToken::Number(s) => {
-                    if alpha.is_some() {
-                        return Err(InvalidFunc); // numbers after alpha not allowed
-                    }
-                    comps.push(*s);
-                }
-                CssColorToken::Slash => {
-                    if alpha.is_some() {
-                        return Err(InvalidFunc); // double slash
-                    }
-                    let next = match it.next() {
-                        Some(CssColorToken::Number(s)) => *s,
-                        _ => return Err(InvalidToken),
-                    };
-                    alpha = Some(next);
-                }
-                CssColorToken::Comma => return Err(InvalidToken), // commas not allowed in this form
-            }
-        }
-    }
-
-    if comps.len() != 3 {
-        return Err(InvalidFunc);
-    }
-
-    let h = parse_hue_component(comps[0])?;
-    let s = parse_hsl_percentage(comps[1])?;
-    let l = parse_hsl_percentage(comps[2])?;
-    let a = alpha.map(parse_alpha_component).transpose()?.unwrap_or(255);
-
-    let color = Color::from_hsl([h, s, l]);
-    Ok(color.with_alpha(a))
-}
-
+/// Parse a color from a string slice.
+/// This function supports:
+/// * Hex string slices
+///
+/// # Arguments
+///
+/// - `mut s` (`&str`) - The string slice to parse.
+///
+/// # Returns
+///
+/// - `Result<Color, ColorParseError>` - The result of the parse.
+///
+/// # Examples
+///
+/// ```
+/// use codimate::color::parse_color;
+///
+/// let hex = "#fff";
+/// let color = parse_color(hex)
+/// match color {
+///     Ok(v) => println!("Good color value: {}", color.into_hex6()),
+///     Err(e) => println!("Error parsing color: {}", e),
+/// }
+/// ```
 pub fn parse_color(mut s: &str) -> Result<Color, ColorParseError> {
     use ColorParseError::*;
 
@@ -453,47 +161,13 @@ pub fn parse_color(mut s: &str) -> Result<Color, ColorParseError> {
     }
     s = s.trim();
 
-    // CSS-like: rgb(r,g,b) / rgba(r,g,b,a[0..1])
-    // TODO: Parsing support is “CSS2-ish” right now
-    // We only handle rgb(r,g,b) and rgba(r,g,b,a) with integers and commas. Modern CSS allows:
-    // Space-separated: rgb(255 0 0)
-    // Percentages: rgb(100% 0% 0%)
-    // Slash alpha: rgb(255 0 0 / 0.5)
-    // HSL: hsl(210 50% 40% / 0.7)
-    // Plan: add a small tokenizer that accepts commas or spaces, and an optional / alpha token.
-    // We already have HSL converters, so once the parser extracts (h, s%, l%, a?), we can call from_hsl.
-    // Also allow for things like rgb(+255, +255, +255) (CSS allowed)
-    let lower = s.to_ascii_lowercase();
-
-    if let Some(args) = lower.strip_prefix("rgb(").and_then(|x| x.strip_suffix(')')) {
-        return parse_css_rgb(args);
-    }
-    if let Some(args) = lower
-        .strip_prefix("rgba(")
-        .and_then(|x| x.strip_suffix(')'))
-    {
-        return parse_css_rgb(args);
-    }
-    if let Some(args) = lower.strip_prefix("hsl(").and_then(|x| x.strip_suffix(')')) {
-        return parse_css_hsl(args);
-    }
-    if let Some(args) = lower
-        .strip_prefix("hsla(")
-        .and_then(|x| x.strip_suffix(')'))
-    {
-        return parse_css_hsl(args);
-    }
-
     // Hex-like
     if let Some(rest) = s.strip_prefix('#') {
         let hex = rest.trim();
         return parse_hex(hex);
     }
 
-    // try hex without '#'
-    // TODO
-
-    Err(InvalidFunc)
+    Err(InvalidHex)
 }
 
 impl core::str::FromStr for Color {
