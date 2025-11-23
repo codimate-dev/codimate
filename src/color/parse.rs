@@ -177,13 +177,35 @@ fn parse_alpha_component(num: &str) -> Result<u8, ColorParseError> {
     }
 }
 
-/// Parse a hex color from a string.
-///
-/// The allowed formats are:
-/// * #RGB
-/// * #RGBA
-/// * #RRGGBB
-/// * #RRGGBBAA
+fn parse_hue_component(num: &str) -> Result<ColorFloat, ColorParseError> {
+    use ColorParseError::InvalidToken;
+
+    if num.ends_with('%') {
+        return Err(InvalidToken);
+    }
+
+    num.parse::<ColorFloat>().map_err(|_| InvalidToken)
+}
+
+fn parse_hsl_percentage(num: &str) -> Result<ColorFloat, ColorParseError> {
+    use ColorParseError::{InvalidToken, OutOfRange};
+
+    let core = num.strip_suffix('%').ok_or(InvalidToken)?;
+    let v: ColorFloat = core.parse().map_err(|_| InvalidToken)?;
+    if !(0.0..=100.0).contains(&v) {
+        return Err(OutOfRange);
+    }
+    Ok(v)
+}
+
+// Parse a hex color from a string.
+//
+// The allowed formats are:
+// * #RGB
+// * #RGBA
+// * #RRGGBB
+// * #RRGGBBAA
+
 fn parse_hex(hex: &str) -> Result<Color, ColorParseError> {
     use ColorParseError::*;
 
@@ -253,13 +275,14 @@ fn parse_hex(hex: &str) -> Result<Color, ColorParseError> {
     Ok(Color::from_rgba([r, g, b, a]))
 }
 
-/// Parse a CSS rgb function.
-///
-/// The allowed styles are:
-/// rgb(r,g,b)
-/// rgb(r g b)
-/// rgb(r% g% b%)
-/// rgb(r g b / a)
+// Parse a CSS rgb function.
+//
+// The allowed styles are:
+// rgb(r,g,b)
+// rgb(r g b)
+// rgb(r% g% b%)
+// rgb(r g b / a)
+
 fn parse_css_rgb(args: &str) -> Result<Color, ColorParseError> {
     use ColorParseError::*;
 
@@ -342,6 +365,86 @@ fn parse_css_rgb(args: &str) -> Result<Color, ColorParseError> {
     Ok(Color::from_rgba([r, g, b, a]))
 }
 
+// Parse a CSS hsl/hsla function (modern space or legacy comma syntax).
+fn parse_css_hsl(args: &str) -> Result<Color, ColorParseError> {
+    use ColorParseError::*;
+
+    let tokens = tokenize(args)?;
+    if tokens.is_empty() {
+        return Err(InvalidFunc);
+    }
+
+    let has_comma = tokens.iter().any(|t| matches!(t, CssColorToken::Comma));
+
+    let mut it = tokens.iter().peekable();
+    let mut comps: Vec<&str> = Vec::new();
+    let mut alpha: Option<&str> = None;
+
+    if has_comma {
+        // legacy hsl(h, s%, l%) or with trailing alpha
+        loop {
+            let num = match it.next() {
+                Some(CssColorToken::Number(s)) => *s,
+                Some(_) => return Err(InvalidFunc),
+                None => break,
+            };
+            comps.push(num);
+
+            match it.next() {
+                Some(CssColorToken::Comma) => continue,
+                Some(CssColorToken::Slash) => {
+                    let next = match it.next() {
+                        Some(CssColorToken::Number(s)) => *s,
+                        _ => return Err(InvalidToken),
+                    };
+                    alpha = Some(next);
+                    if it.next().is_some() {
+                        return Err(InvalidFunc);
+                    }
+                    break;
+                }
+                None => break,
+                Some(_) => return Err(InvalidToken),
+            }
+        }
+    } else {
+        // modern: hsl(h s% l% / a?)
+        while let Some(token) = it.next() {
+            match token {
+                CssColorToken::Number(s) => {
+                    if alpha.is_some() {
+                        return Err(InvalidFunc); // numbers after alpha not allowed
+                    }
+                    comps.push(*s);
+                }
+                CssColorToken::Slash => {
+                    if alpha.is_some() {
+                        return Err(InvalidFunc); // double slash
+                    }
+                    let next = match it.next() {
+                        Some(CssColorToken::Number(s)) => *s,
+                        _ => return Err(InvalidToken),
+                    };
+                    alpha = Some(next);
+                }
+                CssColorToken::Comma => return Err(InvalidToken), // commas not allowed in this form
+            }
+        }
+    }
+
+    if comps.len() != 3 {
+        return Err(InvalidFunc);
+    }
+
+    let h = parse_hue_component(comps[0])?;
+    let s = parse_hsl_percentage(comps[1])?;
+    let l = parse_hsl_percentage(comps[2])?;
+    let a = alpha.map(parse_alpha_component).transpose()?.unwrap_or(255);
+
+    let color = Color::from_hsl([h, s, l]);
+    Ok(color.with_alpha(a))
+}
+
 pub fn parse_color(mut s: &str) -> Result<Color, ColorParseError> {
     use ColorParseError::*;
 
@@ -365,12 +468,20 @@ pub fn parse_color(mut s: &str) -> Result<Color, ColorParseError> {
     if let Some(args) = lower.strip_prefix("rgb(").and_then(|x| x.strip_suffix(')')) {
         return parse_css_rgb(args);
     }
-    // rgba() in CSS is just rgb() with the same arg grammar in modern CSS
     if let Some(args) = lower
         .strip_prefix("rgba(")
         .and_then(|x| x.strip_suffix(')'))
     {
         return parse_css_rgb(args);
+    }
+    if let Some(args) = lower.strip_prefix("hsl(").and_then(|x| x.strip_suffix(')')) {
+        return parse_css_hsl(args);
+    }
+    if let Some(args) = lower
+        .strip_prefix("hsla(")
+        .and_then(|x| x.strip_suffix(')'))
+    {
+        return parse_css_hsl(args);
     }
 
     // Hex-like
