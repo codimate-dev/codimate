@@ -1,5 +1,5 @@
+![codimate_logo](https://github.com/user-attachments/assets/3909ea0d-352c-4504-825d-270458c0c117)
 # codimate
-<!-- TODO: Some cool image here -->
 **codimate** is an engine for programmatic code animations, designed for creating visualizations for educational programming videos.
 
 [![GitHub License](https://img.shields.io/github/license/zentiph/codimate?style=flat-square&labelColor=0f0f0f)](https://github.com/Zentiph/codimate/blob/master/LICENSE)
